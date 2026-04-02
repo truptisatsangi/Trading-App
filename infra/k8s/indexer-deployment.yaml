@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: indexer-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: indexer-service
+  template:
+    metadata:
+      labels:
+        app: indexer-service
+    spec:
+      containers:
+        - name: indexer-service
+          image: your-registry/indexer-service:latest
+          env:
+            - name: CHAIN_ID
+              value: "8453"
+            - name: HEALTH_PORT
+              value: "3001"
+          ports:
+            - containerPort: 3001
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3001

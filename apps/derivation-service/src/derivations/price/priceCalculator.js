@@ -1,3 +1,3 @@
-export async function handlePriceUpdateEvent(repo, event) {
-  await repo.upsertTokenPriceCurrent(event);
+export async function handlePriceUpdateEvent(repo, tx, event) {
+  await repo.upsertTokenPriceCurrent(tx, event);
 }

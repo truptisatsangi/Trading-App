@@ -1,13 +1,13 @@
 import { Interface } from "ethers";
 import {
-  anyPositionManagerArtifact,
-  positionManagerArtifact
+  anyPositionManagerEventsAbi,
+  positionManagerEventsAbi
 } from "../config/abiArtifacts.js";
 import { toSerializable } from "../utils/serialize.js";
 
 const iface = new Interface([
-  ...positionManagerArtifact.abi,
-  ...anyPositionManagerArtifact.abi
+  ...positionManagerEventsAbi,
+  ...anyPositionManagerEventsAbi
 ]);
 const poolStateUpdatedEvent = iface.getEvent("PoolStateUpdated");
 if (!poolStateUpdatedEvent) {

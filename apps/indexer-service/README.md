@@ -1,18 +1,33 @@
-# Indexer Service (Step 1 MVP)
+# Indexer Service (Phase 1 Hardening)
 
-This MVP implements only:
+This service now implements:
 
 - block polling + `eth_getLogs`
-- ABI decoding for `PoolSwap`, `PoolStateUpdated`, and ERC-20 `Transfer`
+- provider-safe log chunking (`LOG_RANGE_LIMIT`)
+- ABI decoding for:
+  - `PoolCreated`
+  - `PoolSwap`
+  - `PoolStateUpdated`
+  - `PoolFeesDistributed`
+  - ERC-20 `Transfer`
+  - ERC-721 `Transfer`
+  - Chainlink `AnswerUpdated`
 - canonical event schema
 - idempotent inserts on `(chain_id, tx_hash, log_index)`
-- basic checkpointing
+- checkpointing
+- canonical event outbox for Kafka relay
+- transient RPC retry and provider failover list
+- optional `/health` endpoint
 
-## Tracked event types
+## Tracked canonical event types
 
+- `pool_created`
 - `swap` (from `PoolSwap`)
 - `price_update` (from `PoolStateUpdated`)
-- `transfer` (from ERC-20 `Transfer`, for configured token addresses only)
+- `pool_fees_distributed`
+- `transfer` (from ERC-20 `Transfer`)
+- `nft_transfer` (from ERC-721 `Transfer`)
+- `answer_updated` (from Chainlink `AnswerUpdated`)
 
 ## Setup
 
@@ -59,3 +74,28 @@ SELECT name, chain_id, last_processed_block, updated_at
 FROM indexer_checkpoints
 WHERE name = 'base-indexer';
 ```
+
+Outbox verification:
+
+```sql
+SELECT topic, COUNT(*) AS pending
+FROM canonical_event_outbox
+WHERE published_at IS NULL
+GROUP BY topic;
+```
+
+## Health and baseline metrics
+
+- Enable health endpoint with `HEALTH_PORT`, then check:
+
+```bash
+curl http://localhost:3001/health
+```
+
+The payload includes recent ingestion stats (`lastRangeFrom`, `lastInserted`, `lastSkipped`, timestamps).
+
+## Runbook snippets
+
+- **RPC range limit errors**: reduce `LOG_RANGE_LIMIT` and keep chunking enabled.
+- **Transient RPC failures**: use multiple URLs via `RPC_URLS` and keep retries enabled.
+- **Kafka relay lag**: inspect `canonical_event_outbox` pending rows and broker health.

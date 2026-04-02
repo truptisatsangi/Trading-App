@@ -1,9 +1,12 @@
 import { JsonRpcProvider } from "ethers";
+import http from "node:http";
 import { config } from "./config/indexerConfig.js";
 import { BlockTracker } from "./listeners/blockTracker.js";
 import { LogFetcher } from "./listeners/logFetcher.js";
 import { processLog } from "./processors/eventProcessor.js";
 import { EventRepository } from "./repositories/eventRepo.js";
+import { KafkaPublisher } from "./publishers/kafkaPublisher.js";
+import { OutboxRelay } from "./publishers/outboxRelay.js";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -51,13 +54,102 @@ async function withTransientRetry(label, action) {
   }
 }
 
+class ProviderPool {
+  constructor(rpcUrls, chainId) {
+    const uniqueUrls = Array.from(new Set(rpcUrls.filter(Boolean)));
+    this.providers = uniqueUrls.map((url) => new JsonRpcProvider(url, chainId));
+    this.index = 0;
+  }
+
+  current() {
+    return this.providers[this.index];
+  }
+
+  rotate() {
+    if (this.providers.length > 1) {
+      this.index = (this.index + 1) % this.providers.length;
+      console.warn(`[indexer] switched provider to index ${this.index}`);
+    }
+  }
+
+  async getBlockNumber() {
+    try {
+      return await this.current().getBlockNumber();
+    } catch (error) {
+      this.rotate();
+      throw error;
+    }
+  }
+
+  async getLogs(filter) {
+    try {
+      return await this.current().getLogs(filter);
+    } catch (error) {
+      this.rotate();
+      throw error;
+    }
+  }
+
+  async getBlock(blockNumber) {
+    try {
+      return await this.current().getBlock(blockNumber);
+    } catch (error) {
+      this.rotate();
+      throw error;
+    }
+  }
+}
+
 async function run() {
-  const provider = new JsonRpcProvider(config.rpcUrl, config.chainId);
+  const stats = {
+    lastRangeFrom: null,
+    lastRangeTo: null,
+    lastInserted: 0,
+    lastSkipped: 0,
+    lastLoopAt: null
+  };
+
+  if (config.healthPort > 0) {
+    http
+      .createServer((req, res) => {
+        if (req.url === "/health") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              status: "ok",
+              service: "indexer-service",
+              stats
+            })
+          );
+          return;
+        }
+        res.writeHead(404);
+        res.end();
+      })
+      .listen(config.healthPort, () => {
+        console.log(`[indexer] health endpoint on :${config.healthPort}`);
+      });
+  }
+
+  const pool = new ProviderPool(
+    [config.rpcUrl, ...config.rpcUrls],
+    config.chainId
+  );
   const repository = new EventRepository(config.dbUrl);
   await repository.init();
 
-  const blockTracker = new BlockTracker(config, repository, provider);
-  const logFetcher = new LogFetcher(provider, config);
+  const blockTracker = new BlockTracker(config, repository, pool);
+  const logFetcher = new LogFetcher(pool, config);
+
+  let relay = null;
+  let kafkaPublisher = null;
+  if (config.enableKafka) {
+    kafkaPublisher = new KafkaPublisher(config);
+    await kafkaPublisher.init();
+    relay = new OutboxRelay(config, repository, kafkaPublisher);
+    relay.start();
+    console.log("[indexer] kafka outbox relay started");
+  }
 
   let checkpointBlock = await blockTracker.getStartBlock();
 
@@ -81,6 +173,17 @@ async function run() {
 
     let inserted = 0;
     let skipped = 0;
+    const blockMetaByNumber = new Map();
+
+    const uniqueBlockNumbers = Array.from(
+      new Set(rawLogs.map((log) => Number(log.blockNumber)))
+    );
+    for (const blockNumber of uniqueBlockNumbers) {
+      const block = await withTransientRetry(`getBlock ${blockNumber}`, () =>
+        pool.getBlock(blockNumber)
+      );
+      blockMetaByNumber.set(blockNumber, block);
+    }
 
     for (const log of rawLogs) {
       const parsed = processLog(log);
@@ -89,10 +192,15 @@ async function run() {
         continue;
       }
 
-      const didInsert = await repository.insertCanonicalEvent({
+      const blockMeta = blockMetaByNumber.get(Number(log.blockNumber));
+      const didInsert = await repository.insertCanonicalEventWithOutbox({
         chainId: config.chainId,
         blockNumber: Number(log.blockNumber),
         blockHash: log.blockHash,
+        parentHash: blockMeta?.parentHash ?? null,
+        blockTimestamp: blockMeta?.timestamp
+          ? new Date(Number(blockMeta.timestamp) * 1000).toISOString()
+          : null,
         txHash: log.transactionHash,
         logIndex: Number(log.index ?? log.logIndex),
         contractAddress: log.address.toLowerCase(),
@@ -101,7 +209,7 @@ async function run() {
         poolId: parsed.poolId,
         tokenAddress: parsed.tokenAddress,
         payload: parsed.payload
-      });
+      }, config.enableKafka ? config.kafkaCanonicalTopic : null);
 
       if (didInsert) {
         inserted += 1;
@@ -112,6 +220,11 @@ async function run() {
 
     await blockTracker.saveCheckpoint(toBlock);
     checkpointBlock = toBlock;
+    stats.lastRangeFrom = fromBlock;
+    stats.lastRangeTo = toBlock;
+    stats.lastInserted = inserted;
+    stats.lastSkipped = skipped;
+    stats.lastLoopAt = new Date().toISOString();
 
     console.log(
       `[indexer] blocks ${fromBlock}-${toBlock}: logs=${rawLogs.length} inserted=${inserted} skipped=${skipped}`

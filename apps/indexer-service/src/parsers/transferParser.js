@@ -1,8 +1,8 @@
 import { Interface } from "ethers";
-import { memecoinArtifact } from "../config/abiArtifacts.js";
+import { memecoinEventsAbi } from "../config/abiArtifacts.js";
 import { toSerializable } from "../utils/serialize.js";
 
-const iface = new Interface(memecoinArtifact.abi);
+const iface = new Interface(memecoinEventsAbi);
 const transferEvent = iface.getEvent("Transfer");
 if (!transferEvent) {
   throw new Error("Transfer event not found in Memecoin ABI");
