@@ -139,6 +139,11 @@ export class ReadModelRepo {
   }
 
   async insertDerivedTrade(tx, event) {
+    const canonicalEventId = await this.resolveCanonicalEventId(tx, event);
+    if (canonicalEventId == null) {
+      return;
+    }
+
     const payload = event.payload || {};
     await tx.query(
       `
@@ -157,7 +162,7 @@ export class ReadModelRepo {
       ON CONFLICT (canonical_event_id) DO NOTHING
       `,
       [
-        event.id ?? null,
+        canonicalEventId,
         event.chain_id,
         event.block_number,
         event.tx_hash,
@@ -179,6 +184,27 @@ export class ReadModelRepo {
         payload.uniFee1 ?? "0"
       ]
     );
+  }
+
+  async resolveCanonicalEventId(tx, event) {
+    if (event.id != null) {
+      return Number(event.id);
+    }
+    if (!event.tx_hash || event.log_index == null) {
+      return null;
+    }
+    const result = await tx.query(
+      `
+      SELECT id
+      FROM canonical_events
+      WHERE chain_id = $1
+        AND tx_hash = $2
+        AND log_index = $3
+      LIMIT 1
+      `,
+      [event.chain_id, event.tx_hash, event.log_index]
+    );
+    return result.rows[0]?.id != null ? Number(result.rows[0].id) : null;
   }
 
   pickPriceLeg(payload) {

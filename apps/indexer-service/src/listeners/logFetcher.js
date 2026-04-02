@@ -3,10 +3,16 @@ import {
 } from "../parsers/priceUpdateParser.js";
 import { POOL_SWAP_TOPIC } from "../parsers/swapParser.js";
 import { TRANSFER_TOPIC } from "../parsers/transferParser.js";
-import { POOL_CREATED_TOPIC } from "../parsers/poolCreatedParser.js";
+import { POOL_CREATED_TOPICS } from "../parsers/poolCreatedParser.js";
 import { POOL_FEES_DISTRIBUTED_TOPIC } from "../parsers/poolFeesDistributedParser.js";
 import { NFT_TRANSFER_TOPIC } from "../parsers/nftTransferParser.js";
 import { ANSWER_UPDATED_TOPIC } from "../parsers/answerUpdatedParser.js";
+
+// Observed onchain PositionManager topics that vary by deployment/ABI version.
+const POSITION_MANAGER_TOPIC_OVERRIDES = [
+  "0xe9a023154a0e1bd430ba68aafea07b09c78a0e5406c3696fb3c0dd631fa53b64",
+  "0xa245a9a38e8877add82f0a82c13e062ab3df16a26121977ddcca8827d46c690a"
+];
 
 export class LogFetcher {
   constructor(provider, config) {
@@ -28,8 +34,9 @@ export class LogFetcher {
             [
               POOL_SWAP_TOPIC,
               POOL_STATE_UPDATED_TOPIC,
-              POOL_CREATED_TOPIC,
-              POOL_FEES_DISTRIBUTED_TOPIC
+              ...POOL_CREATED_TOPICS,
+              POOL_FEES_DISTRIBUTED_TOPIC,
+              ...POSITION_MANAGER_TOPIC_OVERRIDES
             ]
           ]
         }),
