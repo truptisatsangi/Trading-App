@@ -158,4 +158,39 @@ export class EventRepository {
       [outboxId]
     );
   }
+
+  async getStoredBlockHash(chainId, blockNumber) {
+    const res = await this.client.query(
+      `
+      SELECT block_hash
+      FROM canonical_events
+      WHERE chain_id = $1 AND block_number = $2
+      ORDER BY log_index ASC
+      LIMIT 1
+      `,
+      [chainId, blockNumber]
+    );
+    return res.rows[0]?.block_hash ?? null;
+  }
+
+  async rollbackFromBlock(chainId, fromBlockInclusive, checkpointName) {
+    await this.client.query("BEGIN");
+    try {
+      await this.client.query(
+        `
+        DELETE FROM canonical_events
+        WHERE chain_id = $1 AND block_number >= $2
+        `,
+        [chainId, fromBlockInclusive]
+      );
+
+      // outbox has ON DELETE CASCADE via canonical_event_id FK, so it gets cleaned automatically.
+      await this.upsertCheckpoint(checkpointName, chainId, fromBlockInclusive - 1);
+
+      await this.client.query("COMMIT");
+    } catch (e) {
+      await this.client.query("ROLLBACK");
+      throw e;
+    }
+  }
 }

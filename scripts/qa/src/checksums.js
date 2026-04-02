@@ -19,6 +19,28 @@ export async function computeTableChecksums(client, tables = DERIVED_TABLES) {
 }
 
 async function checksumTable(client, tableName) {
+  // Determinism: exclude volatile timestamp columns (NOW()) from hashing.
+  const selectMap = {
+    tokens:
+      "chain_id, token_address, creator_address, memecoin_treasury, token_id, created_block_number, created_tx_hash, created_log_index",
+    token_pools:
+      "chain_id, pool_id, token_address, position_manager_address, currency_flipped, created_block_number, created_tx_hash, created_log_index",
+    derived_trades:
+      "canonical_event_id, chain_id, block_number, tx_hash, log_index, pool_id, token_address, contract_address, fl_amount0, fl_amount1, fl_fee0, fl_fee1, isp_amount0, isp_amount1, isp_fee0, isp_fee1, uni_amount0, uni_amount1, uni_fee0, uni_fee1",
+    token_prices_current:
+      "chain_id, pool_id, contract_address, sqrt_price_x96, tick, protocol_fee, swap_fee, liquidity, source_block_number, source_tx_hash, source_log_index",
+    token_holders_current:
+      "chain_id, token_address, wallet_address, balance_numeric, updated_event_id",
+    token_holder_counts: "chain_id, token_address, holder_count, updated_event_id",
+    token_ownership_current:
+      "chain_id, token_id, nft_contract_address, owner_address, source_tx_hash, source_log_index",
+    eth_usd_rates:
+      "chain_id, round_id, current_answer, updated_at_onchain, source_tx_hash, source_log_index",
+    token_fee_distributions:
+      "chain_id, pool_id, last_canonical_event_id, donate_amount, creator_amount, bidwall_amount, governance_amount, protocol_amount"
+  };
+  const selectCols = selectMap[tableName] ?? "*";
+
   // Order by a stable key when available; fallback to row_to_json text ordering.
   const orderByMap = {
     tokens: "chain_id, token_address",
@@ -47,7 +69,7 @@ async function checksumTable(client, tableName) {
         md5('')
       ) AS checksum,
       COUNT(*)::bigint AS row_count
-    FROM ${tableName} t
+    FROM (SELECT ${selectCols} FROM ${tableName}) t
     `
   );
   return {

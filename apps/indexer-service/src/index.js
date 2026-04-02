@@ -159,6 +159,34 @@ async function run() {
     const head = await withTransientRetry("getFinalizedHead", () =>
       blockTracker.getFinalizedHead()
     );
+
+    // Reorg detection + rollback:
+    // If we have stored events for recent blocks, compare stored block_hash vs provider block hash.
+    // On mismatch, rollback last N blocks and re-index.
+    if (checkpointBlock > 0 && config.reorgReplayWindow > 0) {
+      const probeBlock = Math.max(0, checkpointBlock);
+      const storedHash = await repository.getStoredBlockHash(config.chainId, probeBlock);
+      if (storedHash) {
+        const onchain = await withTransientRetry(`getBlock ${probeBlock}`, () =>
+          pool.getBlock(probeBlock)
+        );
+        const onchainHash = onchain?.hash ?? null;
+        if (onchainHash && storedHash !== onchainHash) {
+          const rollbackFrom = Math.max(0, checkpointBlock - config.reorgReplayWindow + 1);
+          console.warn(
+            `[indexer] reorg detected at block ${probeBlock}. Rolling back from block ${rollbackFrom} (window=${config.reorgReplayWindow})`
+          );
+          await repository.rollbackFromBlock(
+            config.chainId,
+            rollbackFrom,
+            config.checkpointName
+          );
+          checkpointBlock = rollbackFrom - 1;
+          continue;
+        }
+      }
+    }
+
     if (checkpointBlock >= head) {
       await sleep(config.pollIntervalMs);
       continue;
