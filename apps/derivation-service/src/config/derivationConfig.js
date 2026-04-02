@@ -14,6 +14,15 @@ function readBool(value, fallback) {
   return String(value).toLowerCase() === "true";
 }
 
+function hasKafkaBrokers() {
+  return (
+    String(process.env.KAFKA_BROKERS || "")
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean).length > 0
+  );
+}
+
 export const config = {
   dbUrl: process.env.DB_URL || "postgres://postgres:postgres@localhost:5433/token_db",
   chainId: readInt(process.env.CHAIN_ID, 8453),
@@ -21,7 +30,7 @@ export const config = {
   eventBatchSize: readInt(process.env.EVENT_BATCH_SIZE, 200),
   pollIntervalMs: readInt(process.env.POLL_INTERVAL_MS, 3000),
   processorName: process.env.PROCESSOR_NAME || "derivation-service",
-  useKafkaPrimary: String(process.env.USE_KAFKA_PRIMARY || "false").toLowerCase() === "true",
+  useKafkaPrimary: readBool(process.env.USE_KAFKA_PRIMARY, hasKafkaBrokers()),
   kafkaClientId: process.env.KAFKA_CLIENT_ID || "derivation-service",
   kafkaGroupId: process.env.KAFKA_GROUP_ID || "derivation-v1",
   kafkaBrokers: (process.env.KAFKA_BROKERS || "")

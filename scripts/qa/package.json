@@ -8,11 +8,13 @@
     "invariants": "node src/invariants.js",
     "sampling": "node src/rpcSampling.js",
     "idempotency": "node src/idempotency.js",
-    "reorg": "node src/reorgSimulation.js"
+    "reorg": "node src/reorgSimulation.js",
+    "kafka-e2e": "node src/kafkaE2E.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
     "ethers": "^6.13.2",
+    "kafkajs": "^2.2.4",
     "pg": "^8.12.0"
   }
 }

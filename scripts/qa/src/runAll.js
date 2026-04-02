@@ -3,4 +3,5 @@ import "./rpcSampling.js";
 import "./determinismReplay.js";
 import "./idempotency.js";
 import "./reorgSimulation.js";
+import "./kafkaE2E.js";
 

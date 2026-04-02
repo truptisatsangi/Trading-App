@@ -45,6 +45,17 @@ const configuredRpcUrls = (process.env.RPC_URLS || "")
   .split(",")
   .map((v) => v.trim())
   .filter(Boolean);
+const configuredKafkaBrokers = (process.env.KAFKA_BROKERS || "")
+  .split(",")
+  .map((v) => v.trim())
+  .filter(Boolean);
+
+function readBool(value, fallback) {
+  if (value == null) {
+    return fallback;
+  }
+  return String(value).toLowerCase() === "true";
+}
 
 export const config = {
   rpcUrl: process.env.RPC_URL || "https://mainnet.base.org",
@@ -58,12 +69,9 @@ export const config = {
   confirmations: readInt(process.env.CONFIRMATIONS, 3),
   pollIntervalMs: readInt(process.env.POLL_INTERVAL_MS, 4000),
   checkpointName: process.env.CHECKPOINT_NAME || "base-indexer",
-  enableKafka: String(process.env.ENABLE_KAFKA || "false").toLowerCase() === "true",
+  enableKafka: readBool(process.env.ENABLE_KAFKA, configuredKafkaBrokers.length > 0),
   kafkaClientId: process.env.KAFKA_CLIENT_ID || "indexer-service",
-  kafkaBrokers: (process.env.KAFKA_BROKERS || "")
-    .split(",")
-    .map((v) => v.trim())
-    .filter(Boolean),
+  kafkaBrokers: configuredKafkaBrokers,
   kafkaCanonicalTopic: process.env.KAFKA_CANONICAL_TOPIC || "canonical.events.v1",
   kafkaOutboxPollMs: readInt(process.env.KAFKA_OUTBOX_POLL_MS, 1000),
   kafkaOutboxBatchSize: readInt(process.env.KAFKA_OUTBOX_BATCH_SIZE, 200),
