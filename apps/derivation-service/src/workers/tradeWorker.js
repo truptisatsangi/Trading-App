@@ -5,4 +5,9 @@ export async function handleTradeEvent(repo, tx, event) {
     ...event,
     token_address: tokenAddress
   });
+  const metrics = await repo.deriveTradePriceAndCandle(tx, {
+    ...event,
+    token_address: tokenAddress
+  });
+  return metrics;
 }

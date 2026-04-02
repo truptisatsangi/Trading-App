@@ -68,6 +68,42 @@ CREATE TABLE IF NOT EXISTS token_prices_current (
 );
 `;
 
+export const CREATE_TOKEN_PRICES_DERIVED_CURRENT_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS token_prices_derived_current (
+  chain_id INTEGER NOT NULL,
+  token_address TEXT NOT NULL,
+  pool_id TEXT NOT NULL,
+  price_eth NUMERIC(78, 18) NOT NULL,
+  source_block_number BIGINT NOT NULL,
+  source_tx_hash TEXT NOT NULL,
+  source_log_index INTEGER NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(chain_id, token_address)
+);
+`;
+
+export const CREATE_TOKEN_CANDLES_1M_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS token_candles_1m (
+  chain_id INTEGER NOT NULL,
+  token_address TEXT NOT NULL,
+  bucket_start TIMESTAMPTZ NOT NULL,
+  open_price_eth NUMERIC(78, 18) NOT NULL,
+  high_price_eth NUMERIC(78, 18) NOT NULL,
+  low_price_eth NUMERIC(78, 18) NOT NULL,
+  close_price_eth NUMERIC(78, 18) NOT NULL,
+  volume_token_raw NUMERIC(78, 0) NOT NULL DEFAULT 0,
+  volume_eth_raw NUMERIC(78, 0) NOT NULL DEFAULT 0,
+  trade_count BIGINT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(chain_id, token_address, bucket_start)
+);
+`;
+
+export const CREATE_TOKEN_CANDLES_1M_INDEX_SQL = `
+CREATE INDEX IF NOT EXISTS token_candles_1m_token_bucket_idx
+  ON token_candles_1m(chain_id, token_address, bucket_start DESC);
+`;
+
 export const CREATE_TOKEN_HOLDERS_CURRENT_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS token_holders_current (
   chain_id INTEGER NOT NULL,

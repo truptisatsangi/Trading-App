@@ -5,10 +5,13 @@ import {
   CREATE_DERIVED_TRADES_INDEX_SQL,
   CREATE_DERIVED_TRADES_TABLE_SQL,
   CREATE_ETH_USD_RATES_TABLE_SQL,
+  CREATE_TOKEN_CANDLES_1M_INDEX_SQL,
+  CREATE_TOKEN_CANDLES_1M_TABLE_SQL,
   CREATE_TOKEN_FEE_DISTRIBUTIONS_TABLE_SQL,
   CREATE_TOKEN_HOLDER_COUNTS_TABLE_SQL,
   CREATE_TOKEN_HOLDERS_CURRENT_TABLE_SQL,
   CREATE_TOKEN_OWNERSHIP_CURRENT_TABLE_SQL,
+  CREATE_TOKEN_PRICES_DERIVED_CURRENT_TABLE_SQL,
   CREATE_TOKEN_POOLS_TABLE_SQL,
   CREATE_TOKEN_PRICES_CURRENT_TABLE_SQL,
   CREATE_TOKENS_TABLE_SQL
@@ -26,6 +29,9 @@ export class ReadModelRepo {
     await this.client.query(CREATE_DERIVED_TRADES_TABLE_SQL);
     await this.client.query(CREATE_DERIVED_TRADES_INDEX_SQL);
     await this.client.query(CREATE_TOKEN_PRICES_CURRENT_TABLE_SQL);
+    await this.client.query(CREATE_TOKEN_PRICES_DERIVED_CURRENT_TABLE_SQL);
+    await this.client.query(CREATE_TOKEN_CANDLES_1M_TABLE_SQL);
+    await this.client.query(CREATE_TOKEN_CANDLES_1M_INDEX_SQL);
     await this.client.query(CREATE_TOKEN_HOLDERS_CURRENT_TABLE_SQL);
     await this.client.query(CREATE_TOKEN_HOLDER_COUNTS_TABLE_SQL);
     await this.client.query(CREATE_TOKENS_TABLE_SQL);
@@ -33,6 +39,7 @@ export class ReadModelRepo {
     await this.client.query(CREATE_TOKEN_OWNERSHIP_CURRENT_TABLE_SQL);
     await this.client.query(CREATE_ETH_USD_RATES_TABLE_SQL);
     await this.client.query(CREATE_TOKEN_FEE_DISTRIBUTIONS_TABLE_SQL);
+    await this.ensureColumnExists("derived_trades", "token_address", "TEXT");
   }
 
   async close() {
@@ -172,6 +179,257 @@ export class ReadModelRepo {
         payload.uniFee1 ?? "0"
       ]
     );
+  }
+
+  pickPriceLeg(payload) {
+    const legs = [
+      {
+        amount0: BigInt(String(payload.uniAmount0 ?? "0")),
+        amount1: BigInt(String(payload.uniAmount1 ?? "0"))
+      },
+      {
+        amount0: BigInt(String(payload.flAmount0 ?? "0")),
+        amount1: BigInt(String(payload.flAmount1 ?? "0"))
+      },
+      {
+        amount0: BigInt(String(payload.ispAmount0 ?? "0")),
+        amount1: BigInt(String(payload.ispAmount1 ?? "0"))
+      }
+    ];
+    return legs.find((leg) => leg.amount0 !== 0n && leg.amount1 !== 0n) ?? null;
+  }
+
+  bigIntRatioToDecimalString(numerator, denominator, precision = 18) {
+    const scale = 10n ** BigInt(precision);
+    const scaled = (numerator * scale) / denominator;
+    const intPart = scaled / scale;
+    const fracPart = scaled % scale;
+    return `${intPart.toString()}.${fracPart.toString().padStart(precision, "0")}`;
+  }
+
+  floorToMinute(isoOrDate) {
+    const d = new Date(isoOrDate ?? Date.now());
+    d.setSeconds(0, 0);
+    return d.toISOString();
+  }
+
+  async deriveTradePriceAndCandle(tx, event) {
+    if (!event.pool_id) {
+      return null;
+    }
+
+    const poolRes = await tx.query(
+      `
+      SELECT token_address, currency_flipped
+      FROM token_pools
+      WHERE chain_id = $1 AND pool_id = $2
+      `,
+      [event.chain_id, event.pool_id]
+    );
+    const pool = poolRes.rows[0];
+    if (!pool?.token_address) {
+      return null;
+    }
+
+    const payload = event.payload || {};
+    const leg = this.pickPriceLeg(payload);
+    if (!leg) {
+      return null;
+    }
+
+    const abs0 = leg.amount0 < 0n ? -leg.amount0 : leg.amount0;
+    const abs1 = leg.amount1 < 0n ? -leg.amount1 : leg.amount1;
+    const tokenRaw = pool.currency_flipped ? abs1 : abs0;
+    const ethRaw = pool.currency_flipped ? abs0 : abs1;
+    if (tokenRaw === 0n || ethRaw === 0n) {
+      return null;
+    }
+
+    const priceEth = this.bigIntRatioToDecimalString(ethRaw, tokenRaw);
+
+    const bucketStart = this.floorToMinute(event.block_timestamp ?? new Date().toISOString());
+    await tx.query(
+      `
+      INSERT INTO token_prices_derived_current(
+        chain_id, token_address, pool_id, price_eth,
+        source_block_number, source_tx_hash, source_log_index, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+      ON CONFLICT (chain_id, token_address)
+      DO UPDATE SET
+        pool_id = EXCLUDED.pool_id,
+        price_eth = EXCLUDED.price_eth,
+        source_block_number = EXCLUDED.source_block_number,
+        source_tx_hash = EXCLUDED.source_tx_hash,
+        source_log_index = EXCLUDED.source_log_index,
+        updated_at = NOW()
+      `,
+      [
+        event.chain_id,
+        pool.token_address,
+        event.pool_id,
+        priceEth,
+        event.block_number,
+        event.tx_hash,
+        event.log_index
+      ]
+    );
+
+    await tx.query(
+      `
+      INSERT INTO token_candles_1m(
+        chain_id, token_address, bucket_start,
+        open_price_eth, high_price_eth, low_price_eth, close_price_eth,
+        volume_token_raw, volume_eth_raw, trade_count, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$4,$4,$4,$5::numeric,$6::numeric,1,NOW())
+      ON CONFLICT (chain_id, token_address, bucket_start)
+      DO UPDATE SET
+        high_price_eth = GREATEST(token_candles_1m.high_price_eth, EXCLUDED.close_price_eth),
+        low_price_eth = LEAST(token_candles_1m.low_price_eth, EXCLUDED.close_price_eth),
+        close_price_eth = EXCLUDED.close_price_eth,
+        volume_token_raw = token_candles_1m.volume_token_raw + EXCLUDED.volume_token_raw,
+        volume_eth_raw = token_candles_1m.volume_eth_raw + EXCLUDED.volume_eth_raw,
+        trade_count = token_candles_1m.trade_count + 1,
+        updated_at = NOW()
+      `,
+      [
+        event.chain_id,
+        pool.token_address,
+        bucketStart,
+        priceEth,
+        tokenRaw.toString(),
+        ethRaw.toString()
+      ]
+    );
+
+    return {
+      tokenAddress: pool.token_address,
+      poolId: event.pool_id,
+      priceEth,
+      bucketStart
+    };
+  }
+
+  async ensureColumnExists(tableName, columnName, columnType) {
+    const result = await this.client.query(
+      `
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = $1
+        AND column_name = $2
+      LIMIT 1
+      `,
+      [tableName, columnName]
+    );
+    if (result.rowCount > 0) {
+      return;
+    }
+    await this.client.query(
+      `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType}`
+    );
+  }
+
+  async listTokens(chainId, limit = 50, offset = 0) {
+    const result = await this.client.query(
+      `
+      SELECT
+        t.chain_id,
+        t.token_address,
+        t.creator_address,
+        t.created_at,
+        pdc.price_eth,
+        pdc.updated_at AS price_updated_at
+      FROM tokens t
+      LEFT JOIN token_prices_derived_current pdc
+        ON pdc.chain_id = t.chain_id
+       AND pdc.token_address = t.token_address
+      WHERE t.chain_id = $1
+      ORDER BY COALESCE(pdc.price_eth, 0) DESC, t.created_at DESC
+      LIMIT $2 OFFSET $3
+      `,
+      [chainId, limit, offset]
+    );
+    return result.rows;
+  }
+
+  async getTokenDetails(chainId, tokenAddress, candleLimit = 120, tradeLimit = 50) {
+    const tokenRes = await this.client.query(
+      `
+      SELECT
+        t.chain_id,
+        t.token_address,
+        t.creator_address,
+        t.created_at,
+        pdc.pool_id,
+        pdc.price_eth,
+        pdc.updated_at AS price_updated_at
+      FROM tokens t
+      LEFT JOIN token_prices_derived_current pdc
+        ON pdc.chain_id = t.chain_id
+       AND pdc.token_address = t.token_address
+      WHERE t.chain_id = $1 AND t.token_address = $2
+      LIMIT 1
+      `,
+      [chainId, tokenAddress.toLowerCase()]
+    );
+    const token = tokenRes.rows[0] ?? null;
+    if (!token) {
+      return null;
+    }
+
+    const [candlesRes, tradesRes] = await Promise.all([
+      this.client.query(
+        `
+        SELECT
+          bucket_start,
+          open_price_eth,
+          high_price_eth,
+          low_price_eth,
+          close_price_eth,
+          volume_token_raw,
+          volume_eth_raw,
+          trade_count
+        FROM token_candles_1m
+        WHERE chain_id = $1
+          AND token_address = $2
+        ORDER BY bucket_start DESC
+        LIMIT $3
+        `,
+        [chainId, tokenAddress.toLowerCase(), candleLimit]
+      ),
+      this.client.query(
+        `
+        SELECT
+          canonical_event_id,
+          block_number,
+          tx_hash,
+          log_index,
+          pool_id,
+          token_address,
+          uni_amount0,
+          uni_amount1,
+          fl_amount0,
+          fl_amount1,
+          isp_amount0,
+          isp_amount1,
+          indexed_at
+        FROM derived_trades
+        WHERE chain_id = $1
+          AND token_address = $2
+        ORDER BY block_number DESC, log_index DESC
+        LIMIT $3
+        `,
+        [chainId, tokenAddress.toLowerCase(), tradeLimit]
+      )
+    ]);
+
+    return {
+      token,
+      candles1m: candlesRes.rows,
+      trades: tradesRes.rows
+    };
   }
 
   async upsertTokenPriceCurrent(tx, event) {
