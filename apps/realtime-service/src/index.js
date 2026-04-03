@@ -41,19 +41,50 @@ function broadcast(room, payload) {
   }
 }
 
+const WEI = "1000000000000000000";
+const ETH_USD_SCALE = "100000000";
+
 async function fetchTokenSnapshot(tokenAddress) {
   const tokenRes = await db.query(
     `
     SELECT
       t.token_address,
       t.creator_address,
+      t.created_at,
+      t.memecoin_treasury,
+      t.token_id,
       p.pool_id,
       p.price_eth,
-      p.updated_at AS price_updated_at
+      p.updated_at AS price_updated_at,
+      (
+        SELECT tp.currency_flipped
+        FROM token_pools tp
+        WHERE tp.chain_id = t.chain_id AND tp.token_address = t.token_address
+        ORDER BY tp.created_block_number DESC
+        LIMIT 1
+      ) AS currency_flipped,
+      hc.holder_count,
+      (
+        SELECT COALESCE(SUM(c.volume_eth_raw::numeric), 0) / ${WEI}::numeric
+        FROM token_candles_1m c
+        WHERE c.chain_id = t.chain_id
+          AND c.token_address = t.token_address
+          AND c.bucket_start >= NOW() - INTERVAL '24 hours'
+      ) AS volume_24h_eth,
+      (
+        SELECT e.current_answer::numeric / ${ETH_USD_SCALE}::numeric
+        FROM eth_usd_rates e
+        WHERE e.chain_id = t.chain_id
+        ORDER BY e.indexed_at DESC NULLS LAST
+        LIMIT 1
+      ) AS eth_usd
     FROM tokens t
     LEFT JOIN token_prices_derived_current p
       ON p.chain_id = t.chain_id
      AND p.token_address = t.token_address
+    LEFT JOIN token_holder_counts hc
+      ON hc.chain_id = t.chain_id
+     AND hc.token_address = t.token_address
     WHERE t.chain_id = $1 AND t.token_address = $2
     LIMIT 1
     `,
@@ -95,7 +126,10 @@ async function run() {
   await redis.subscribe(redisChannel, async (raw) => {
     try {
       const change = JSON.parse(raw);
-      if (change.type !== "swap" || !change.tokenAddress) {
+      if (
+        !change.tokenAddress ||
+        (change.type !== "swap" && change.type !== "price_update")
+      ) {
         return;
       }
       const tokenAddress = String(change.tokenAddress).toLowerCase();

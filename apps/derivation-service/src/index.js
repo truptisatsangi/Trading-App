@@ -26,6 +26,7 @@ async function processEvent(repo, event) {
     evt,
     async (tx) => {
       let tradeMetrics = null;
+      let derivedMetrics = null;
       switch (evt.event_type) {
         case "pool_created":
           await handlePoolCreatedEvent(repo, tx, evt);
@@ -34,7 +35,7 @@ async function processEvent(repo, event) {
           tradeMetrics = await handleTradeEvent(repo, tx, evt);
           break;
         case "price_update":
-          await handlePriceUpdateEvent(repo, tx, evt);
+          derivedMetrics = await handlePriceUpdateEvent(repo, tx, evt);
           break;
         case "transfer":
           await handleTransferEvent(repo, tx, evt);
@@ -52,9 +53,11 @@ async function processEvent(repo, event) {
           break;
       }
       evt._tradeMetrics = tradeMetrics;
+      evt._derivedMetrics = derivedMetrics;
     }
   );
 
+  const metrics = evt._tradeMetrics ?? evt._derivedMetrics;
   return {
     handled: applied,
     change: {
@@ -62,16 +65,20 @@ async function processEvent(repo, event) {
       type: evt.event_type,
       chainId: evt.chain_id,
       poolId: evt.pool_id ?? null,
-      tokenAddress: evt._tradeMetrics?.tokenAddress ?? evt.token_address ?? null,
+      tokenAddress:
+        evt._tradeMetrics?.tokenAddress ??
+        evt._derivedMetrics?.tokenAddress ??
+        evt.token_address ??
+        null,
       eventId: evt.id ?? null,
       txHash: evt.tx_hash ?? null,
       emittedAt: new Date().toISOString(),
       payload:
-        evt._tradeMetrics == null
+        metrics == null
           ? null
           : {
-              priceEth: evt._tradeMetrics.priceEth,
-              bucketStart: evt._tradeMetrics.bucketStart
+              priceEth: metrics.priceEth,
+              bucketStart: metrics.bucketStart
             }
     }
   };

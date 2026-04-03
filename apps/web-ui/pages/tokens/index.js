@@ -1,13 +1,34 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { API_BASE_URL, WS_URL } from "../../lib/config";
-import { asNumber, shortAddress } from "../../lib/format";
+import { API_BASE_URL, EXPLORER_BASE, WS_URL } from "../../lib/config";
+import {
+  asNumber,
+  explorerAddressUrl,
+  formatEthPrice,
+  formatUsd,
+  priceValidationHint
+} from "../../lib/format";
 
-function sortTokens(tokens) {
-  return [...tokens].sort((a, b) => asNumber(b.price_eth) - asNumber(a.price_eth));
+const SORTS = [
+  { id: "price", label: "Price (ETH)", key: "price_eth" },
+  { id: "volume", label: "24h volume (ETH)", key: "volume_24h_eth" },
+  { id: "newest", label: "Newest", key: "created_at" },
+  { id: "holders", label: "Holders", key: "holder_count" }
+];
+
+function sortTokens(tokens, sortId) {
+  const spec = SORTS.find((s) => s.id === sortId) || SORTS[0];
+  const key = spec.key;
+  return [...tokens].sort((a, b) => {
+    if (key === "created_at") {
+      return new Date(b[key] || 0) - new Date(a[key] || 0);
+    }
+    return asNumber(b[key]) - asNumber(a[key]);
+  });
 }
 
 export default function TokensPage({ initialTokens }) {
+  const [sortId, setSortId] = useState("price");
   const [tokensById, setTokensById] = useState(() => {
     const map = {};
     for (const token of initialTokens) {
@@ -41,34 +62,127 @@ export default function TokensPage({ initialTokens }) {
     return () => ws.close();
   }, []);
 
-  const tokens = useMemo(() => sortTokens(Object.values(tokensById)), [tokensById]);
+  const tokens = useMemo(
+    () => sortTokens(Object.values(tokensById), sortId),
+    [tokensById, sortId]
+  );
 
   return (
-    <main>
-      <h1>Tokens</h1>
-      <p>Total: {tokens.length}</p>
-      <table>
-        <thead>
-          <tr>
-            <th>Token</th>
-            <th>Creator</th>
-            <th>Price (ETH)</th>
-            <th>Volume (24h)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tokens.map((token) => (
-            <tr key={token.token_address}>
-              <td>
-                <Link href={`/tokens/${token.token_address}`}>{shortAddress(token.token_address)}</Link>
-              </td>
-              <td>{shortAddress(token.creator_address)}</td>
-              <td>{asNumber(token.price_eth).toFixed(8)}</td>
-              <td>{token.volume_24h_eth ?? "-"}</td>
+    <main className="container">
+      <h1 className="page-title">Token discovery</h1>
+      <p className="page-meta">
+        Sorted list with full contract addresses for verification. USD uses the latest indexed
+        ETH/USD oracle when available.
+      </p>
+
+      <div className="toolbar">
+        <label className="sort">
+          Sort by{" "}
+          <select
+            className="sort-select"
+            value={sortId}
+            onChange={(e) => setSortId(e.target.value)}
+          >
+            {SORTS.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="muted">
+          Total: {tokens.length}{" "}
+          <span className="badge">live</span>
+        </span>
+      </div>
+
+      <div className="table-wrap">
+        <table className="data">
+          <thead>
+            <tr>
+              <th>Token contract</th>
+              <th>Creator</th>
+              <th className="num">Price (ETH)</th>
+              <th className="num">Price (USD)</th>
+              <th className="num">Volume 24h (ETH)</th>
+              <th className="num">Holders</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {tokens.map((token) => {
+              const priceHint = priceValidationHint(token.price_eth);
+              const ethUsd = token.eth_usd;
+              const vol = token.volume_24h_eth;
+              return (
+                <tr key={token.token_address}>
+                  <td>
+                    <div className="mono">
+                      <Link href={`/tokens/${token.token_address}`}>
+                        {token.token_address}
+                      </Link>
+                    </div>
+                    {explorerAddressUrl(EXPLORER_BASE, token.token_address) && (
+                      <div className="muted" style={{ fontSize: "0.8rem" }}>
+                        <a
+                          href={explorerAddressUrl(EXPLORER_BASE, token.token_address)}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          View on explorer
+                        </a>
+                      </div>
+                    )}
+                    {priceHint && (
+                      <div className="warn" style={{ marginTop: "0.35rem" }}>
+                        {priceHint}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    {token.creator_address ? (
+                      <>
+                        <div className="mono">{token.creator_address}</div>
+                        {explorerAddressUrl(EXPLORER_BASE, token.creator_address) && (
+                          <div className="muted" style={{ fontSize: "0.8rem" }}>
+                            <a
+                              href={explorerAddressUrl(EXPLORER_BASE, token.creator_address)}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Explorer
+                            </a>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
+                  <td className="num">{formatEthPrice(token.price_eth)}</td>
+                  <td className="num">{formatUsd(token.price_eth, ethUsd)}</td>
+                  <td className="num">
+                    {vol != null && vol !== ""
+                      ? formatEthPrice(vol)
+                      : "—"}
+                  </td>
+                  <td className="num">
+                    {token.holder_count != null ? token.holder_count : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="panel" style={{ marginTop: "1rem" }}>
+        <h2>PRD coverage (from current indexer)</h2>
+        <p className="hint" style={{ margin: 0 }}>
+          Shown: full addresses, creator (on-chain <code>creator()</code> via API when DB empty), spot
+          ETH from pool <code>sqrtPriceX96</code>, implied USD, 24h volume from 1m candles, holders. Not
+          yet: name/symbol/logo, sparkline, market cap, TradingView, full pagination.
+        </p>
+      </div>
     </main>
   );
 }
