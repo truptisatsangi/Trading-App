@@ -1,45 +1,13 @@
 import { Client } from "pg";
-import {
-  CREATE_DERIVATION_APPLIED_EVENTS_TABLE_SQL,
-  CREATE_DERIVATION_CHECKPOINTS_TABLE_SQL,
-  CREATE_DERIVED_TRADES_INDEX_SQL,
-  CREATE_DERIVED_TRADES_TABLE_SQL,
-  CREATE_ETH_USD_RATES_TABLE_SQL,
-  CREATE_TOKEN_CANDLES_1M_INDEX_SQL,
-  CREATE_TOKEN_CANDLES_1M_TABLE_SQL,
-  CREATE_TOKEN_FEE_DISTRIBUTIONS_TABLE_SQL,
-  CREATE_TOKEN_HOLDER_COUNTS_TABLE_SQL,
-  CREATE_TOKEN_HOLDERS_CURRENT_TABLE_SQL,
-  CREATE_TOKEN_OWNERSHIP_CURRENT_TABLE_SQL,
-  CREATE_TOKEN_PRICES_DERIVED_CURRENT_TABLE_SQL,
-  CREATE_TOKEN_POOLS_TABLE_SQL,
-  CREATE_TOKEN_PRICES_CURRENT_TABLE_SQL,
-  CREATE_TOKENS_TABLE_SQL
-} from "../models/readModels.js";
 
 export class ReadModelRepo {
   constructor(dbUrl) {
     this.client = new Client({ connectionString: dbUrl });
   }
 
+  /** Schema is applied by `npm run migrate` at repo root (see db/migrate.mjs). */
   async init() {
     await this.client.connect();
-    await this.client.query(CREATE_DERIVATION_CHECKPOINTS_TABLE_SQL);
-    await this.client.query(CREATE_DERIVATION_APPLIED_EVENTS_TABLE_SQL);
-    await this.client.query(CREATE_DERIVED_TRADES_TABLE_SQL);
-    await this.client.query(CREATE_DERIVED_TRADES_INDEX_SQL);
-    await this.client.query(CREATE_TOKEN_PRICES_CURRENT_TABLE_SQL);
-    await this.client.query(CREATE_TOKEN_PRICES_DERIVED_CURRENT_TABLE_SQL);
-    await this.client.query(CREATE_TOKEN_CANDLES_1M_TABLE_SQL);
-    await this.client.query(CREATE_TOKEN_CANDLES_1M_INDEX_SQL);
-    await this.client.query(CREATE_TOKEN_HOLDERS_CURRENT_TABLE_SQL);
-    await this.client.query(CREATE_TOKEN_HOLDER_COUNTS_TABLE_SQL);
-    await this.client.query(CREATE_TOKENS_TABLE_SQL);
-    await this.client.query(CREATE_TOKEN_POOLS_TABLE_SQL);
-    await this.client.query(CREATE_TOKEN_OWNERSHIP_CURRENT_TABLE_SQL);
-    await this.client.query(CREATE_ETH_USD_RATES_TABLE_SQL);
-    await this.client.query(CREATE_TOKEN_FEE_DISTRIBUTIONS_TABLE_SQL);
-    await this.ensureColumnExists("derived_trades", "token_address", "TEXT");
   }
 
   async close() {
@@ -233,6 +201,92 @@ export class ReadModelRepo {
     return `${intPart.toString()}.${fracPart.toString().padStart(precision, "0")}`;
   }
 
+  /**
+   * Uniswap: sqrtPriceX96 = sqrt(amount1/amount0) * 2^96 (raw amounts).
+   * Matches Flaunch PositionManager PoolKey:
+   * - currency_flipped FALSE → currency0 = native (ETH), currency1 = memecoin
+   *   → amount1/amount0 = meme/ETH → ETH per meme = amount0/amount1 → use den/num.
+   * - currency_flipped TRUE → currency0 = memecoin, currency1 = native (ETH)
+   *   → amount1/amount0 = ETH/meme → use num/den.
+   */
+  priceEthFromSqrtRatioX96(sqrtPriceX96Str, currencyFlipped) {
+    const s = BigInt(String(sqrtPriceX96Str || "0"));
+    if (s <= 0n) {
+      return null;
+    }
+    const q96 = 1n << 96n;
+    const num = s * s;
+    const den = q96 * q96;
+    const flipped = Boolean(currencyFlipped);
+    if (!flipped) {
+      return this.bigIntRatioToDecimalString(den, num, 18);
+    }
+    return this.bigIntRatioToDecimalString(num, den, 18);
+  }
+
+  /**
+   * Canonical spot from pool state (PoolStateUpdated). Preferred over per-trade |ΔETH|/|Δtoken| (dust legs).
+   */
+  async upsertDerivedPriceFromPoolSqrt(tx, event) {
+    const payload = event.payload || {};
+    const sqrtStr = payload.sqrtPriceX96 ?? payload.sqrt_price_x96;
+    if (!event.pool_id || sqrtStr == null || String(sqrtStr) === "0") {
+      return null;
+    }
+
+    const poolRes = await tx.query(
+      `
+      SELECT token_address, currency_flipped
+      FROM token_pools
+      WHERE chain_id = $1 AND pool_id = $2
+      `,
+      [event.chain_id, event.pool_id]
+    );
+    const pool = poolRes.rows[0];
+    if (!pool?.token_address) {
+      return null;
+    }
+
+    const priceEth = this.priceEthFromSqrtRatioX96(String(sqrtStr), pool.currency_flipped);
+    if (!priceEth) {
+      return null;
+    }
+
+    const bucketStart = this.floorToMinute(event.block_timestamp ?? new Date().toISOString());
+    await tx.query(
+      `
+      INSERT INTO token_prices_derived_current(
+        chain_id, token_address, pool_id, price_eth,
+        source_block_number, source_tx_hash, source_log_index, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+      ON CONFLICT (chain_id, token_address)
+      DO UPDATE SET
+        pool_id = EXCLUDED.pool_id,
+        price_eth = EXCLUDED.price_eth,
+        source_block_number = EXCLUDED.source_block_number,
+        source_tx_hash = EXCLUDED.source_tx_hash,
+        source_log_index = EXCLUDED.source_log_index,
+        updated_at = NOW()
+      `,
+      [
+        event.chain_id,
+        pool.token_address,
+        event.pool_id,
+        priceEth,
+        event.block_number,
+        event.tx_hash,
+        event.log_index
+      ]
+    );
+
+    return {
+      tokenAddress: pool.token_address,
+      priceEth,
+      bucketStart
+    };
+  }
+
   floorToMinute(isoOrDate) {
     const d = new Date(isoOrDate ?? Date.now());
     d.setSeconds(0, 0);
@@ -265,41 +319,39 @@ export class ReadModelRepo {
 
     const abs0 = leg.amount0 < 0n ? -leg.amount0 : leg.amount0;
     const abs1 = leg.amount1 < 0n ? -leg.amount1 : leg.amount1;
-    const tokenRaw = pool.currency_flipped ? abs1 : abs0;
-    const ethRaw = pool.currency_flipped ? abs0 : abs1;
+    // Align with PoolKey: !currency_flipped → token0=ETH, token1=meme; flipped → token0=meme, token1=ETH
+    let ethRaw;
+    let tokenRaw;
+    if (pool.currency_flipped) {
+      tokenRaw = abs0;
+      ethRaw = abs1;
+    } else {
+      ethRaw = abs0;
+      tokenRaw = abs1;
+    }
     if (tokenRaw === 0n || ethRaw === 0n) {
       return null;
     }
 
-    const priceEth = this.bigIntRatioToDecimalString(ethRaw, tokenRaw);
+    const sqrtRes = await tx.query(
+      `
+      SELECT sqrt_price_x96
+      FROM token_prices_current
+      WHERE chain_id = $1 AND pool_id = $2
+      LIMIT 1
+      `,
+      [event.chain_id, event.pool_id]
+    );
+    const sqrtStr = sqrtRes.rows[0]?.sqrt_price_x96;
+    let priceEth =
+      sqrtStr && String(sqrtStr) !== "0"
+        ? this.priceEthFromSqrtRatioX96(String(sqrtStr), pool.currency_flipped)
+        : null;
+    if (!priceEth) {
+      priceEth = this.bigIntRatioToDecimalString(ethRaw, tokenRaw);
+    }
 
     const bucketStart = this.floorToMinute(event.block_timestamp ?? new Date().toISOString());
-    await tx.query(
-      `
-      INSERT INTO token_prices_derived_current(
-        chain_id, token_address, pool_id, price_eth,
-        source_block_number, source_tx_hash, source_log_index, updated_at
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
-      ON CONFLICT (chain_id, token_address)
-      DO UPDATE SET
-        pool_id = EXCLUDED.pool_id,
-        price_eth = EXCLUDED.price_eth,
-        source_block_number = EXCLUDED.source_block_number,
-        source_tx_hash = EXCLUDED.source_tx_hash,
-        source_log_index = EXCLUDED.source_log_index,
-        updated_at = NOW()
-      `,
-      [
-        event.chain_id,
-        pool.token_address,
-        event.pool_id,
-        priceEth,
-        event.block_number,
-        event.tx_hash,
-        event.log_index
-      ]
-    );
 
     await tx.query(
       `
@@ -335,26 +387,6 @@ export class ReadModelRepo {
       priceEth,
       bucketStart
     };
-  }
-
-  async ensureColumnExists(tableName, columnName, columnType) {
-    const result = await this.client.query(
-      `
-      SELECT 1
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name = $1
-        AND column_name = $2
-      LIMIT 1
-      `,
-      [tableName, columnName]
-    );
-    if (result.rowCount > 0) {
-      return;
-    }
-    await this.client.query(
-      `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType}`
-    );
   }
 
   async listTokens(chainId, limit = 50, offset = 0) {
@@ -588,7 +620,9 @@ export class ReadModelRepo {
       return;
     }
 
-    const creatorAddress = params.creator?.toLowerCase?.() ?? null;
+    // Tuple (AnyPositionManager): [memecoin, creator, ...]; JSON may only have numeric keys if Result was not normalized upstream.
+    const rawCreator = params.creator ?? params[1];
+    const creatorAddress = rawCreator ? String(rawCreator).toLowerCase() : null;
     await tx.query(
       `
       INSERT INTO tokens(

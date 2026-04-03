@@ -1,26 +1,13 @@
 import { Client } from "pg";
-import {
-  CREATE_CANONICAL_EVENTS_BLOCK_HASH_INDEX_SQL,
-  CREATE_CANONICAL_EVENTS_INDEX_SQL,
-  CREATE_CANONICAL_OUTBOX_INDEX_SQL,
-  CREATE_CANONICAL_OUTBOX_TABLE_SQL,
-  CREATE_CANONICAL_EVENTS_TABLE_SQL,
-  CREATE_CHECKPOINTS_TABLE_SQL
-} from "../models/canonicalEvents.js";
 
 export class EventRepository {
   constructor(dbUrl) {
     this.client = new Client({ connectionString: dbUrl });
   }
 
+  /** Schema is applied by `npm run migrate` at repo root (see db/migrate.mjs). */
   async init() {
     await this.client.connect();
-    await this.client.query(CREATE_CANONICAL_EVENTS_TABLE_SQL);
-    await this.client.query(CREATE_CANONICAL_EVENTS_INDEX_SQL);
-    await this.client.query(CREATE_CANONICAL_EVENTS_BLOCK_HASH_INDEX_SQL);
-    await this.client.query(CREATE_CHECKPOINTS_TABLE_SQL);
-    await this.client.query(CREATE_CANONICAL_OUTBOX_TABLE_SQL);
-    await this.client.query(CREATE_CANONICAL_OUTBOX_INDEX_SQL);
   }
 
   async close() {

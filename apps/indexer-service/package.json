@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "init-schema": "node src/cli/initSchema.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

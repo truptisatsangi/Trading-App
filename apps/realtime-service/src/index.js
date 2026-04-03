@@ -3,7 +3,6 @@ import http from "node:http";
 import { Client } from "pg";
 import { createClient } from "redis";
 import { WebSocketServer } from "ws";
-
 dotenv.config();
 
 const port = Number(process.env.PORT ?? 3004);

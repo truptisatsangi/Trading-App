@@ -1,0 +1,13 @@
+{
+  "name": "trading-platform",
+  "private": true,
+  "type": "module",
+  "description": "Root deps for shared db/ scripts imported by apps",
+  "scripts": {
+    "migrate": "node db/migrate.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "pg": "^8.12.0"
+  }
+}
