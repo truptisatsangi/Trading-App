@@ -175,14 +175,6 @@ export default function TokensPage({ initialTokens }) {
         </table>
       </div>
 
-      <div className="panel" style={{ marginTop: "1rem" }}>
-        <h2>PRD coverage (from current indexer)</h2>
-        <p className="hint" style={{ margin: 0 }}>
-          Shown: full addresses, creator (on-chain <code>creator()</code> via API when DB empty), spot
-          ETH from pool <code>sqrtPriceX96</code>, implied USD, 24h volume from 1m candles, holders. Not
-          yet: name/symbol/logo, sparkline, market cap, TradingView, full pagination.
-        </p>
-      </div>
     </main>
   );
 }

@@ -14,16 +14,16 @@ function eventOnlyAbi(artifact) {
 }
 
 export const positionManagerArtifact = readArtifact(
-  "../../../../flaunch-contracts/abi/PositionManager.json"
+  "../../abis/PositionManager.json"
 );
 export const anyPositionManagerArtifact = readArtifact(
-  "../../../../flaunch-contracts/abi/AnyPositionManager.json"
+  "../../abis/AnyPositionManager.json"
 );
 export const memecoinArtifact = readArtifact(
-  "../../../../flaunch-contracts/abi/Memecoin.json"
+  "../../abis/Memecoin.json"
 );
 export const flaunchArtifact = readArtifact(
-  "../../../../flaunch-contracts/abi/Flaunch.json"
+  "../../abis/Flaunch.json"
 );
 
 export const positionManagerEventsAbi = eventOnlyAbi(positionManagerArtifact);
