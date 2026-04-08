@@ -10,6 +10,7 @@ import {
 } from "../../lib/format";
 
 const SORTS = [
+  { id: "market_cap", label: "Market cap (ETH)", key: "market_cap_eth" },
   { id: "price", label: "Price (ETH)", key: "price_eth" },
   { id: "volume", label: "24h volume (ETH)", key: "volume_24h_eth" },
   { id: "newest", label: "Newest", key: "created_at" },
@@ -28,7 +29,7 @@ function sortTokens(tokens, sortId) {
 }
 
 export default function TokensPage({ initialTokens }) {
-  const [sortId, setSortId] = useState("price");
+  const [sortId, setSortId] = useState("market_cap");
   const [tokensById, setTokensById] = useState(() => {
     const map = {};
     for (const token of initialTokens) {
@@ -102,6 +103,8 @@ export default function TokensPage({ initialTokens }) {
             <tr>
               <th>Token contract</th>
               <th>Creator</th>
+              <th className="num">Market cap (ETH)</th>
+              <th className="num">Market cap (USD)</th>
               <th className="num">Price (ETH)</th>
               <th className="num">Price (USD)</th>
               <th className="num">Volume 24h (ETH)</th>
@@ -157,6 +160,14 @@ export default function TokensPage({ initialTokens }) {
                     ) : (
                       <span className="muted">—</span>
                     )}
+                  </td>
+                  <td className="num">{formatEthPrice(token.market_cap_eth)}</td>
+                  <td className="num">
+                    {token.market_cap_usd != null
+                      ? `$${asNumber(token.market_cap_usd).toLocaleString("en-US", {
+                          maximumFractionDigits: 2
+                        })}`
+                      : "—"}
                   </td>
                   <td className="num">{formatEthPrice(token.price_eth)}</td>
                   <td className="num">{formatUsd(token.price_eth, ethUsd)}</td>

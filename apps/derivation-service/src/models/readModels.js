@@ -197,3 +197,15 @@ CREATE TABLE IF NOT EXISTS token_fee_distributions (
   PRIMARY KEY(chain_id, pool_id)
 );
 `;
+
+export const CREATE_TOKEN_SUPPLIES_CURRENT_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS token_supplies_current (
+  chain_id INTEGER NOT NULL,
+  token_address TEXT NOT NULL,
+  total_supply_raw TEXT NOT NULL,
+  decimals INTEGER NOT NULL DEFAULT 18,
+  source_event_id BIGINT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(chain_id, token_address)
+);
+`;

@@ -34,6 +34,7 @@ import {
   CREATE_TOKEN_POOLS_TABLE_SQL,
   CREATE_TOKEN_PRICES_CURRENT_TABLE_SQL,
   CREATE_TOKEN_PRICES_DERIVED_CURRENT_TABLE_SQL,
+  CREATE_TOKEN_SUPPLIES_CURRENT_TABLE_SQL,
   CREATE_TOKENS_TABLE_SQL
 } from "../apps/derivation-service/src/models/readModels.js";
 
@@ -60,6 +61,7 @@ const STEPS = [
   },
   { name: "token_prices_current", sql: CREATE_TOKEN_PRICES_CURRENT_TABLE_SQL },
   { name: "token_prices_derived_current", sql: CREATE_TOKEN_PRICES_DERIVED_CURRENT_TABLE_SQL },
+  { name: "token_supplies_current", sql: CREATE_TOKEN_SUPPLIES_CURRENT_TABLE_SQL },
   { name: "token_candles_1m", sql: CREATE_TOKEN_CANDLES_1M_TABLE_SQL },
   { name: "token_candles_1m index", sql: CREATE_TOKEN_CANDLES_1M_INDEX_SQL },
   { name: "token_holders_current", sql: CREATE_TOKEN_HOLDERS_CURRENT_TABLE_SQL },

@@ -24,6 +24,7 @@ function hasKafkaBrokers() {
 }
 
 export const config = {
+  rpcUrl: process.env.RPC_URL || "https://mainnet.base.org",
   dbUrl: process.env.DB_URL || "postgres://postgres:postgres@localhost:5433/token_db",
   chainId: readInt(process.env.CHAIN_ID, 8453),
   checkpointName: process.env.CHECKPOINT_NAME || "derivation-v1",

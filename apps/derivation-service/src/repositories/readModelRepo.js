@@ -612,6 +612,30 @@ export class ReadModelRepo {
     );
   }
 
+  async upsertTokenSupply(tx, chainId, tokenAddress, supply, sourceEventId = null) {
+    await tx.query(
+      `
+      INSERT INTO token_supplies_current (
+        chain_id, token_address, total_supply_raw, decimals, source_event_id, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, NOW())
+      ON CONFLICT (chain_id, token_address)
+      DO UPDATE SET
+        total_supply_raw = EXCLUDED.total_supply_raw,
+        decimals = EXCLUDED.decimals,
+        source_event_id = COALESCE(EXCLUDED.source_event_id, token_supplies_current.source_event_id),
+        updated_at = NOW()
+      `,
+      [
+        chainId,
+        String(tokenAddress).toLowerCase(),
+        String(supply.totalSupplyRaw),
+        Number(supply.decimals ?? 18),
+        sourceEventId
+      ]
+    );
+  }
+
   async upsertTokenFromPoolCreated(tx, event) {
     const payload = event.payload || {};
     const params = payload.params || {};

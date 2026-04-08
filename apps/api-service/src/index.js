@@ -69,7 +69,32 @@ const TOKEN_ROW_SELECT = `
     WHERE e.chain_id = t.chain_id
     ORDER BY e.indexed_at DESC NULLS LAST
     LIMIT 1
-  ) AS eth_usd
+  ) AS eth_usd,
+  ts.total_supply_raw,
+  ts.decimals AS supply_decimals,
+  (
+    CASE
+      WHEN p.price_eth IS NULL OR ts.total_supply_raw IS NULL THEN NULL
+      ELSE p.price_eth * (ts.total_supply_raw::numeric / POWER(10::numeric, COALESCE(ts.decimals, 18)))
+    END
+  ) AS market_cap_eth,
+  (
+    CASE
+      WHEN p.price_eth IS NULL OR ts.total_supply_raw IS NULL THEN NULL
+      ELSE p.price_eth
+        * (ts.total_supply_raw::numeric / POWER(10::numeric, COALESCE(ts.decimals, 18)))
+        * COALESCE(
+          (
+            SELECT e.current_answer::numeric / ${ETH_USD_SCALE}::numeric
+            FROM eth_usd_rates e
+            WHERE e.chain_id = t.chain_id
+            ORDER BY e.indexed_at DESC NULLS LAST
+            LIMIT 1
+          ),
+          0
+        )
+    END
+  ) AS market_cap_usd
 `;
 
 app.get("/health", (_req, res) => {
@@ -94,8 +119,14 @@ app.get("/tokens", async (req, res) => {
     LEFT JOIN token_holder_counts hc
       ON hc.chain_id = t.chain_id
      AND hc.token_address = t.token_address
+    LEFT JOIN token_supplies_current ts
+      ON ts.chain_id = t.chain_id
+     AND ts.token_address = t.token_address
     WHERE t.chain_id = $1
-    ORDER BY COALESCE(p.price_eth, 0) DESC, t.created_at DESC
+    ORDER BY COALESCE(
+      p.price_eth * (COALESCE(ts.total_supply_raw, '0')::numeric / POWER(10::numeric, COALESCE(ts.decimals, 18))),
+      0
+    ) DESC, t.created_at DESC
     LIMIT $2 OFFSET $3
     `,
     [chainId, limit, offset]
@@ -135,6 +166,9 @@ app.get("/tokens/:id", async (req, res) => {
     LEFT JOIN token_holder_counts hc
       ON hc.chain_id = t.chain_id
      AND hc.token_address = t.token_address
+    LEFT JOIN token_supplies_current ts
+      ON ts.chain_id = t.chain_id
+     AND ts.token_address = t.token_address
     LEFT JOIN token_fee_distributions fd
       ON fd.chain_id = t.chain_id
      AND fd.pool_id = COALESCE(
@@ -172,6 +206,10 @@ app.get("/tokens/:id", async (req, res) => {
     holder_count: row.holder_count,
     volume_24h_eth: row.volume_24h_eth,
     eth_usd: row.eth_usd,
+    total_supply_raw: row.total_supply_raw,
+    supply_decimals: row.supply_decimals,
+    market_cap_eth: row.market_cap_eth,
+    market_cap_usd: row.market_cap_usd,
     fee_distribution:
       row.fee_pool_id != null
         ? {

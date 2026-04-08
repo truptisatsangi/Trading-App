@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "init-schema": "node src/cli/initSchema.js"
+    "init-schema": "node src/cli/initSchema.js",
+    "backfill-supplies": "node src/cli/backfillSupplies.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
+    "ethers": "^6.16.0",
     "kafkajs": "^2.2.4",
     "pg": "^8.12.0",
     "redis": "^4.7.0"
