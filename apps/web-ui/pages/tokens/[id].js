@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { API_BASE_URL, EXPLORER_BASE, WS_URL } from "../../lib/config";
 import {
   explorerAddressUrl,
@@ -21,18 +21,6 @@ function normalizeDetail(detail) {
 export default function TokenDetailPage({ tokenId, initialDetail }) {
   const [detail, setDetail] = useState(() => normalizeDetail(initialDetail));
 
-  const refresh = useCallback(async () => {
-    const res = await fetch(
-      `${API_BASE_URL}/tokens/${tokenId}?tradeLimit=20&candleLimit=200`,
-      { cache: "no-store" }
-    );
-    if (!res.ok) {
-      return;
-    }
-    const body = await res.json();
-    setDetail(normalizeDetail(body));
-  }, [tokenId]);
-
   useEffect(() => {
     const room = `token:${tokenId.toLowerCase()}`;
     const ws = new WebSocket(WS_URL);
@@ -45,13 +33,31 @@ export default function TokenDetailPage({ tokenId, initialDetail }) {
         if (msg.type !== "token.tick") {
           return;
         }
-        refresh();
+        // Apply WS payload directly — no REST round-trip needed.
+        setDetail((prev) => {
+          const updatedCandles = [...prev.candles1m];
+          if (msg.latestCandle1m) {
+            const idx = updatedCandles.findIndex(
+              (c) => c.bucket_start === msg.latestCandle1m.bucket_start
+            );
+            if (idx >= 0) {
+              updatedCandles[idx] = msg.latestCandle1m;
+            } else {
+              updatedCandles.unshift(msg.latestCandle1m);
+            }
+          }
+          return {
+            token: msg.token ?? prev.token,
+            candles1m: updatedCandles,
+            trades: prev.trades
+          };
+        });
       } catch {
         // Keep page alive on invalid websocket payloads.
       }
     });
     return () => ws.close();
-  }, [refresh, tokenId]);
+  }, [tokenId]);
 
   const t = detail.token;
   const priceHint = t ? priceValidationHint(t.price_eth) : null;

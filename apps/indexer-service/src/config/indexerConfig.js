@@ -64,6 +64,10 @@ export const config = {
   dbUrl: process.env.DB_URL || "postgres://postgres:postgres@localhost:5432/trading_platform",
   startBlock: readInt(process.env.START_BLOCK, 0),
   blockBatchSize: readInt(process.env.BLOCK_BATCH_SIZE, 500),
+  // Max rows per INSERT transaction. 13 columns × 500 rows = 6,500 params, well under
+  // PostgreSQL's 65,535 limit. Large enough to amortise round-trip cost, small enough
+  // that a rollback or lock contention is cheap.
+  insertBatchSize: readInt(process.env.INSERT_BATCH_SIZE, 500),
   logRangeLimit: readInt(process.env.LOG_RANGE_LIMIT, 10),
   reorgReplayWindow: readInt(process.env.REORG_REPLAY_WINDOW, 30),
   confirmations: readInt(process.env.CONFIRMATIONS, 3),

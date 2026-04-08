@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import http from "node:http";
-import { Client } from "pg";
+import { Pool } from "pg";
 import { createClient } from "redis";
 import { WebSocketServer } from "ws";
 dotenv.config();
@@ -8,8 +8,8 @@ dotenv.config();
 const port = Number(process.env.PORT ?? 3004);
 const chainId = Number(process.env.CHAIN_ID ?? 8453);
 const redisChannel = process.env.REDIS_DERIVED_CHANNEL ?? "derived.changes.v1";
-const db = new Client({
-  connectionString: process.env.DB_URL ?? "postgres://postgres:postgres@localhost:5433/token_db"
+const db = new Pool({
+  connectionString: process.env.DB_URL ?? "postgres://postgres:postgres@localhost:6432/token_db"
 });
 
 const rooms = new Map();
@@ -144,8 +144,6 @@ async function fetchTokenSnapshot(tokenAddress) {
 }
 
 async function run() {
-  await db.connect();
-
   const redis = createClient({
     url: process.env.REDIS_URL ?? "redis://localhost:6379"
   });

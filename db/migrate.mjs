@@ -13,6 +13,7 @@ import { Client } from "pg";
 import { ensureDatabaseExists } from "./ensureDatabase.js";
 import {
   CREATE_CANONICAL_EVENTS_BLOCK_HASH_INDEX_SQL,
+  CREATE_CANONICAL_EVENTS_CHAIN_ID_INDEX_SQL,
   CREATE_CANONICAL_EVENTS_INDEX_SQL,
   CREATE_CANONICAL_OUTBOX_INDEX_SQL,
   CREATE_CANONICAL_OUTBOX_TABLE_SQL,
@@ -47,6 +48,7 @@ const STEPS = [
   { name: "canonical_events", sql: CREATE_CANONICAL_EVENTS_TABLE_SQL },
   { name: "canonical_events indexes", sql: CREATE_CANONICAL_EVENTS_INDEX_SQL },
   { name: "canonical_events block_hash index", sql: CREATE_CANONICAL_EVENTS_BLOCK_HASH_INDEX_SQL },
+  { name: "canonical_events chain_id+id index", sql: CREATE_CANONICAL_EVENTS_CHAIN_ID_INDEX_SQL },
   { name: "indexer_checkpoints", sql: CREATE_CHECKPOINTS_TABLE_SQL },
   { name: "canonical_event_outbox", sql: CREATE_CANONICAL_OUTBOX_TABLE_SQL },
   { name: "canonical_event_outbox index", sql: CREATE_CANONICAL_OUTBOX_INDEX_SQL },
@@ -64,6 +66,41 @@ const STEPS = [
   { name: "token_supplies_current", sql: CREATE_TOKEN_SUPPLIES_CURRENT_TABLE_SQL },
   { name: "token_candles_1m", sql: CREATE_TOKEN_CANDLES_1M_TABLE_SQL },
   { name: "token_candles_1m index", sql: CREATE_TOKEN_CANDLES_1M_INDEX_SQL },
+  {
+    name: "token_candles_1m hypertable (TimescaleDB)",
+    sql: `
+    DO $$
+    BEGIN
+      PERFORM create_hypertable(
+        'token_candles_1m',
+        'bucket_start',
+        if_not_exists => TRUE,
+        migrate_data  => TRUE
+      );
+    EXCEPTION WHEN OTHERS THEN
+      RAISE NOTICE 'create_hypertable skipped: %', SQLERRM;
+    END $$;
+    `
+  },
+  {
+    name: "token_candles_1m compression (TimescaleDB)",
+    sql: `
+    DO $$
+    BEGIN
+      ALTER TABLE token_candles_1m SET (
+        timescaledb.compress,
+        timescaledb.compress_segmentby = 'chain_id,token_address'
+      );
+      PERFORM add_compression_policy(
+        'token_candles_1m',
+        INTERVAL '7 days',
+        if_not_exists => TRUE
+      );
+    EXCEPTION WHEN OTHERS THEN
+      RAISE NOTICE 'compression policy skipped: %', SQLERRM;
+    END $$;
+    `
+  },
   { name: "token_holders_current", sql: CREATE_TOKEN_HOLDERS_CURRENT_TABLE_SQL },
   { name: "token_holder_counts", sql: CREATE_TOKEN_HOLDER_COUNTS_TABLE_SQL },
   { name: "tokens", sql: CREATE_TOKENS_TABLE_SQL },

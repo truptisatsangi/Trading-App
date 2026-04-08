@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import express from "express";
-import { Client } from "pg";
+import { Pool } from "pg";
 import { fetchMemecoinCreator } from "./memecoinCreator.js";
 
 dotenv.config();
@@ -9,8 +9,8 @@ const app = express();
 const port = Number(process.env.PORT ?? 3003);
 const chainId = Number(process.env.CHAIN_ID ?? 8453);
 const rpcUrl = process.env.RPC_URL ?? "";
-const db = new Client({
-  connectionString: process.env.DB_URL ?? "postgres://postgres:postgres@localhost:5433/token_db"
+const db = new Pool({
+  connectionString: process.env.DB_URL ?? "postgres://postgres:postgres@localhost:6432/token_db"
 });
 
 /** On-chain Memecoin.creator() when DB row is empty (see Memecoin.sol). */
@@ -275,7 +275,6 @@ app.get("/tokens/:id", async (req, res) => {
 });
 
 async function run() {
-  await db.connect();
   app.listen(port, () => {
     console.log(`[api] listening on :${port}`);
   });

@@ -199,8 +199,6 @@ async function run() {
       () => logFetcher.fetchLogs(fromBlock, toBlock)
     );
 
-    let inserted = 0;
-    let skipped = 0;
     const blockMetaByNumber = new Map();
 
     const uniqueBlockNumbers = Array.from(
@@ -213,6 +211,10 @@ async function run() {
       blockMetaByNumber.set(blockNumber, block);
     }
 
+    // Build the full batch of parsed events, skipping decode errors up front.
+    const eventBatch = [];
+    let skipped = 0;
+
     for (const log of rawLogs) {
       const parsed = processLog(log);
       if (!parsed || parsed.eventType === "decode_error") {
@@ -221,7 +223,7 @@ async function run() {
       }
 
       const blockMeta = blockMetaByNumber.get(Number(log.blockNumber));
-      const didInsert = await repository.insertCanonicalEventWithOutbox({
+      eventBatch.push({
         chainId: config.chainId,
         blockNumber: Number(log.blockNumber),
         blockHash: log.blockHash,
@@ -237,14 +239,17 @@ async function run() {
         poolId: parsed.poolId,
         tokenAddress: parsed.tokenAddress,
         payload: parsed.payload
-      }, config.enableKafka ? config.kafkaCanonicalTopic : null);
-
-      if (didInsert) {
-        inserted += 1;
-      } else {
-        skipped += 1;
-      }
+      });
     }
+
+    let inserted = 0;
+    const outboxTopic = config.enableKafka ? config.kafkaCanonicalTopic : null;
+    for (let i = 0; i < eventBatch.length; i += config.insertBatchSize) {
+      const chunk = eventBatch.slice(i, i + config.insertBatchSize);
+      const result = await repository.insertCanonicalEventsBatch(chunk, outboxTopic);
+      inserted += result.inserted;
+    }
+    skipped += eventBatch.length - inserted;
 
     await blockTracker.saveCheckpoint(toBlock);
     checkpointBlock = toBlock;

@@ -1,21 +1,22 @@
-import { Client } from "pg";
+import { Pool } from "pg";
 
 export class ReadModelRepo {
   constructor(dbUrl) {
-    this.client = new Client({ connectionString: dbUrl });
+    this.pool = new Pool({ connectionString: dbUrl });
   }
 
   /** Schema is applied by `npm run migrate` at repo root (see db/migrate.mjs). */
   async init() {
-    await this.client.connect();
+    const client = await this.pool.connect();
+    client.release();
   }
 
   async close() {
-    await this.client.end();
+    await this.pool.end();
   }
 
   async getCheckpoint(name, chainId) {
-    const result = await this.client.query(
+    const result = await this.pool.query(
       `
       SELECT last_event_id
       FROM derivation_checkpoints
@@ -27,7 +28,7 @@ export class ReadModelRepo {
   }
 
   async upsertCheckpoint(name, chainId, lastEventId) {
-    await this.client.query(
+    await this.pool.query(
       `
       INSERT INTO derivation_checkpoints(name, chain_id, last_event_id, updated_at)
       VALUES ($1, $2, $3, NOW())
@@ -39,7 +40,7 @@ export class ReadModelRepo {
   }
 
   async getCanonicalEventsAfterId(chainId, lastEventId, limit) {
-    const result = await this.client.query(
+    const result = await this.pool.query(
       `
       SELECT id, chain_id, block_number, tx_hash, log_index, contract_address, event_type, pool_id, token_address, payload
       FROM canonical_events
@@ -54,14 +55,17 @@ export class ReadModelRepo {
   }
 
   async withTransaction(work) {
-    await this.client.query("BEGIN");
+    const client = await this.pool.connect();
     try {
-      const result = await work(this.client);
-      await this.client.query("COMMIT");
+      await client.query("BEGIN");
+      const result = await work(client);
+      await client.query("COMMIT");
       return result;
     } catch (error) {
-      await this.client.query("ROLLBACK");
+      await client.query("ROLLBACK");
       throw error;
+    } finally {
+      client.release();
     }
   }
 
@@ -390,7 +394,7 @@ export class ReadModelRepo {
   }
 
   async listTokens(chainId, limit = 50, offset = 0) {
-    const result = await this.client.query(
+    const result = await this.pool.query(
       `
       SELECT
         t.chain_id,
@@ -413,7 +417,7 @@ export class ReadModelRepo {
   }
 
   async getTokenDetails(chainId, tokenAddress, candleLimit = 120, tradeLimit = 50) {
-    const tokenRes = await this.client.query(
+    const tokenRes = await this.pool.query(
       `
       SELECT
         t.chain_id,
@@ -438,7 +442,7 @@ export class ReadModelRepo {
     }
 
     const [candlesRes, tradesRes] = await Promise.all([
-      this.client.query(
+      this.pool.query(
         `
         SELECT
           bucket_start,
@@ -457,7 +461,7 @@ export class ReadModelRepo {
         `,
         [chainId, tokenAddress.toLowerCase(), candleLimit]
       ),
-      this.client.query(
+      this.pool.query(
         `
         SELECT
           canonical_event_id,

@@ -29,6 +29,11 @@ CREATE INDEX IF NOT EXISTS canonical_events_block_hash_idx
   ON canonical_events(chain_id, block_number DESC, block_hash);
 `;
 
+export const CREATE_CANONICAL_EVENTS_CHAIN_ID_INDEX_SQL = `
+CREATE INDEX IF NOT EXISTS canonical_events_chain_id_id_idx
+  ON canonical_events(chain_id, id);
+`;
+
 export const CREATE_CHECKPOINTS_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS indexer_checkpoints (
   name TEXT NOT NULL,
